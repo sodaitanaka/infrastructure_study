@@ -2,45 +2,45 @@
 %% T3 Recruit Automation — 全体アーキテクチャ図
 %% ============================================================
 
-flowchart TB
+flowchart LR
 
     %% ── ユーザー ──
     subgraph USER["👤 ユーザー層"]
-        direction LR
+        direction TB
         U1["採用担当者\n（クライアント企業）"]
         U2["T3管理者\n（admin）"]
     end
 
     %% ── フロントエンド ──
-    subgraph FE["🖥️ フロントエンド  /  Next.js + TypeScript"]
+    subgraph FE["🖥️ フロントエンド\nNext.js + TypeScript"]
         direction TB
-        FE1["ユーザー画面 6画面\nログイン / TOP / プロンプト設定\n送信時間設定 / ログ閲覧 / 会社設定"]
-        FE2["管理画面 4画面\n管理者ログイン / テナント一覧\nテナント作成 / ジョブ監視"]
+        FE1["ユーザー画面 6画面\n① ログイン\n② TOP\n③ プロンプト設定\n④ 送信時間設定\n⑤ ログ閲覧\n⑥ 会社設定（APIKey）"]
+        FE2["管理画面 4画面\n① 管理者ログイン\n② テナント一覧\n③ テナント作成\n④ ジョブ監視"]
     end
 
     %% ── バックエンド ──
-    subgraph BE["⚙️ バックエンド  /  Next.js API Routes"]
+    subgraph BE["⚙️ バックエンド\nNext.js API Routes"]
         direction TB
         BE1["認証 / セッション管理\nNextAuth.js + JWT"]
-        BE2["テナント管理 API\nCRUD + 状態制御 + 上限管理"]
-        BE3["n8n ゲートウェイ\nワークフロー操作のラッパー"]
-        BE4["ログ集約 API\nSheets → DB への取り込み"]
+        BE2["テナント管理 API\nCRUD / 状態制御 / 上限管理"]
+        BE3["n8n ゲートウェイ\nワークフロー操作ラッパー"]
+        BE4["ログ集約 API\nSheets → DB 取り込み"]
         BE5["APIキー管理\nAES-256 暗号化保存"]
     end
 
     %% ── DB ──
-    subgraph DB["🗄️ DB  /  PostgreSQL（Supabase）"]
-        direction LR
+    subgraph DB["🗄️ DB\nPostgreSQL（Supabase）"]
+        direction TB
         DB1["tenants\nテナント情報・状態・上限"]
         DB2["job_logs\nジョブ実行履歴"]
         DB3["api_keys\n暗号化APIキー"]
-        DB4["send_logs\n送信ログ（Sheetsから移行）"]
+        DB4["send_logs\n送信ログ"]
     end
 
     %% ── n8n ──
-    subgraph N8N["🔄 n8n Cloud  /  ワークフローエンジン"]
+    subgraph N8N["🔄 n8n Cloud\nワークフローエンジン"]
         direction TB
-        N1["ワークフロー群\n（テナント × 媒体ごとにコピー）\n例: T3_新卒_OfferBox\n    A社_新卒_OfferBox\n    A社_中途_BizReach"]
+        N1["ワークフロー群\nテナント × 媒体ごとにコピー\nT3_新卒_OfferBox\nA社_新卒_OfferBox\nA社_中途_BizReach"]
         N2["Cron Trigger\n送信スケジュール管理"]
         N3["Webhook\nRPA ↔ n8n 通信"]
         N4["n8n Credentials\nAPIキー・アカウント情報"]
@@ -48,13 +48,13 @@ flowchart TB
 
     %% ── AI ──
     subgraph AI["🤖 AI層"]
-        direction LR
+        direction TB
         AI1["Claude API\nレジュメ解析\n候補者分類\nメッセージ生成（統合処理）"]
         AI2["Gemini API\n品質スコアリング\n0–100点"]
     end
 
     %% ── RPA ──
-    subgraph RPA["🤖 RPA層  /  RoboCorp Cloud"]
+    subgraph RPA["🤖 RPA層\nRoboCorp Cloud"]
         direction TB
         R1["ブックマーク取得\n対象候補者リスト"]
         R2["レジュメスクレイピング\n1件ずつ取得"]
@@ -63,7 +63,7 @@ flowchart TB
 
     %% ── 採用媒体 ──
     subgraph MEDIA["🌐 採用媒体"]
-        direction LR
+        direction TB
         M1["OfferBox（新卒）"]
         M2["BizReach（中途）\nPhase2"]
         M3["Wantedly / Green\nPhase2"]
@@ -71,7 +71,7 @@ flowchart TB
 
     %% ── Google Workspace ──
     subgraph GWS["📊 Google Workspace"]
-        direction LR
+        direction TB
         G1["Spreadsheets\n承認待ちビュー\n禁止ワード辞書\n送信履歴ログ（Phase1）"]
     end
 
@@ -119,10 +119,10 @@ flowchart TB
     classDef aiStyle fill:#ECFDF5,stroke:#10B981,stroke-width:2px
     classDef rpaStyle fill:#FFF7ED,stroke:#F97316,stroke-width:2px
 
-    class USER userStyle
-    class FE feStyle
-    class BE beStyle
-    class DB dbStyle
-    class N8N n8nStyle
-    class AI aiStyle
-    class RPA rpaStyle
+    class U1,U2 userStyle
+    class FE1,FE2 feStyle
+    class BE1,BE2,BE3,BE4,BE5 beStyle
+    class DB1,DB2,DB3,DB4 dbStyle
+    class N1,N2,N3,N4 n8nStyle
+    class AI1,AI2 aiStyle
+    class R1,R2,R3 rpaStyle
