@@ -1,0 +1,144 @@
+%% ============================================================
+%% T3 Recruit Automation — アーキテクチャ図（n8nなし版）
+%% ============================================================
+
+flowchart LR
+
+    %% ── ユーザー ──
+    subgraph USER["👤 ユーザー層"]
+        direction TB
+        U1["採用担当者\n（クライアント企業）"]
+        U2["T3管理者\n（admin）"]
+    end
+
+    %% ── フロントエンド ──
+    subgraph FE["🖥️ フロントエンド\nNext.js + TypeScript"]
+        direction TB
+        FE1["ユーザー画面 6画面\n① ログイン\n② TOP\n③ プロンプト設定\n④ 送信時間設定\n⑤ ログ閲覧\n⑥ 会社設定（APIKey）"]
+        FE2["管理画面 4画面\n① 管理者ログイン\n② テナント一覧\n③ テナント作成\n④ ジョブ監視"]
+    end
+
+    %% ── バックエンド ──
+    subgraph BE["⚙️ バックエンド\nNext.js API Routes"]
+        direction TB
+        BE1["認証 / セッション管理\nNextAuth.js + JWT"]
+        BE2["テナント管理 API\nCRUD / 状態制御 / 上限管理"]
+        BE4["ログ集約 API"]
+        BE5["APIキー管理\nAES-256 暗号化保存"]
+    end
+
+    %% ── ジョブキュー ──
+    subgraph QUEUE["⏱️ ジョブキュー / スケジューラ\nBull + Redis（or pg-boss）"]
+        direction TB
+        Q1["Cron スケジューラ\n送信時間・曜日管理"]
+        Q2["ジョブキュー\nテナントごとの実行管理"]
+        Q3["リトライ制御\n失敗時の再実行"]
+    end
+
+    %% ── オーケストレーター ──
+    subgraph ORCH["🔀 オーケストレーター\nPython / FastAPI（Worker）"]
+        direction TB
+        O1["レジュメ検証\n必須項目チェック"]
+        O2["時期判定\nearly / mid / late"]
+        O3["プロンプト構築\n企業情報 × 時期 × 候補者Type"]
+        O4["ハードルール検証\n変数残留 / 禁止語 / 文字数"]
+        O5["承認フロー制御\nAuto / Review / NG 振り分け"]
+        O6["二重送信チェック\nsend_dedup_key照合"]
+    end
+
+    %% ── DB ──
+    subgraph DB["🗄️ DB\nPostgreSQL（Supabase）"]
+        direction TB
+        DB1["tenants\nテナント情報・状態・上限"]
+        DB2["job_logs\nジョブ実行履歴"]
+        DB3["api_keys\n暗号化APIキー"]
+        DB4["send_logs\n送信ログ・二重送信チェック用"]
+        DB5["prompts\nプロンプトテンプレート"]
+        DB6["approval_queue\n承認待ちキュー"]
+    end
+
+    %% ── AI ──
+    subgraph AI["🤖 AI層"]
+        direction TB
+        AI1["Claude API\nレジュメ解析\n候補者分類\nメッセージ生成（統合処理）"]
+        AI2["Gemini API\n品質スコアリング\n0–100点"]
+    end
+
+    %% ── RPA ──
+    subgraph RPA["🤖 RPA層\nRoboCorp Cloud"]
+        direction TB
+        R1["ブックマーク取得\n対象候補者リスト"]
+        R2["レジュメスクレイピング\n1件ずつ取得"]
+        R3["メッセージ自動送信\nIPローテーション込み"]
+    end
+
+    %% ── 採用媒体 ──
+    subgraph MEDIA["🌐 採用媒体"]
+        direction TB
+        M1["OfferBox（新卒）"]
+        M2["BizReach（中途）\nPhase2"]
+        M3["Wantedly / Green\nPhase2"]
+    end
+
+    %% ── 接続 ──
+    U1 -->|操作| FE1
+    U2 -->|操作| FE2
+
+    FE1 -->|API呼び出し| BE1
+    FE1 -->|API呼び出し| BE4
+    FE2 -->|API呼び出し| BE2
+    FE2 -->|API呼び出し| BE4
+
+    BE1 --> DB1
+    BE2 --> DB1
+    BE2 -->|ジョブ登録| Q1
+    BE4 --> DB2
+    BE5 --> DB3
+
+    Q1 --> Q2
+    Q2 -->|ジョブ起動| R1
+    Q2 -->|ジョブ起動| ORCH
+    Q3 -.->|失敗時リトライ| Q2
+
+    R1 --> R2
+    R2 -->|レジュメデータ| O1
+    O1 --> O2
+    O2 --> O3
+    O3 -->|プロンプト| AI1
+    AI1 -->|生成メッセージ| O4
+    O4 -->|OK| AI2
+    AI2 -->|スコア| O5
+    O5 -->|Auto| O6
+    O5 -->|Review| DB6
+    O5 -->|NG| DB4
+    O6 -->|重複なし| R3
+    O6 -->|重複あり| DB4
+
+    O3 --> DB5
+    DB5 -->|テンプレート読込| O3
+
+    R3 -->|送信| M1
+    R3 -.->|Phase2| M2
+    R3 -.->|Phase2| M3
+    R3 --> DB4
+
+    DB6 -->|承認操作| FE1
+
+    %% スタイル
+    classDef userStyle fill:#EFF6FF,stroke:#3B82F6,stroke-width:2px
+    classDef feStyle fill:#F0FDF4,stroke:#22C55E,stroke-width:2px
+    classDef beStyle fill:#FFFBEB,stroke:#F59E0B,stroke-width:2px
+    classDef queueStyle fill:#FDF4FF,stroke:#A855F7,stroke-width:2px
+    classDef orchStyle fill:#FFF7ED,stroke:#F97316,stroke-width:2px
+    classDef dbStyle fill:#FEF2F2,stroke:#EF4444,stroke-width:2px
+    classDef aiStyle fill:#ECFDF5,stroke:#10B981,stroke-width:2px
+    classDef rpaStyle fill:#F0F9FF,stroke:#0EA5E9,stroke-width:2px
+
+    class U1,U2 userStyle
+    class FE1,FE2 feStyle
+    class BE1,BE2,BE4,BE5 beStyle
+    class Q1,Q2,Q3 queueStyle
+    class O1,O2,O3,O4,O5,O6 orchStyle
+    class DB1,DB2,DB3,DB4,DB5,DB6 dbStyle
+    class AI1,AI2 aiStyle
+    class R1,R2,R3 rpaStyle
