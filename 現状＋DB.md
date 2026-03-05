@@ -1,124 +1,94 @@
 ```mermaid
 %% ============================================================
-%% T3 Recruit Automation — 全体アーキテクチャ図（Spreadsheet → DB移行後）
+%% T3 Recruit Automation — 全体アーキテクチャ図（DB運用 / フロント無し）
 %% ============================================================
 
 flowchart LR
 
-    %% ── ユーザー ──
-    subgraph USER["👤 ユーザー層"]
+    %% ── 運用者 ──
+    subgraph USER["👤 運用層"]
         direction TB
-        U1["採用担当者\n（クライアント企業）"]
-        U2["T3管理者\n（admin）"]
+        U1["T3運用者\n（DB操作 / 設定更新）"]
+        U2["RPA Worker\n（自動処理）"]
     end
 
-    %% ── フロントエンド ──
-    subgraph FE["🖥️ フロントエンド\nNext.js + TypeScript"]
+    %% ── 管理ツール ──
+    subgraph ADMIN["🛠️ 管理ツール"]
         direction TB
-        FE1["ユーザー画面 6画面\n① ログイン\n② TOP\n③ プロンプト設定\n④ 送信時間設定\n⑤ ログ閲覧\n⑥ 会社設定（APIKey）"]
-        FE2["管理画面 4画面\n① 管理者ログイン\n② テナント一覧\n③ テナント作成\n④ ジョブ監視"]
-    end
-
-    %% ── バックエンド ──
-    subgraph BE["⚙️ バックエンド\nNext.js API Routes"]
-        direction TB
-        BE1["認証 / セッション管理\nNextAuth.js + JWT"]
-        BE2["テナント管理 API\nCRUD / 状態制御 / 上限管理"]
-        BE3["n8n ゲートウェイ\nワークフロー操作ラッパー"]
-        BE4["ログ集約 API"]
-        BE5["APIキー管理\nAES-256 暗号化保存"]
+        A1["DB管理\nSupabase Studio / psql"]
+        A2["管理スクリプト\nNode.js / CLI"]
     end
 
     %% ── DB ──
     subgraph DB["🗄️ DB\nPostgreSQL（Supabase）"]
         direction TB
-        DB1["tenants\nテナント情報・状態・上限"]
-        DB2["job_logs\nジョブ実行履歴"]
-        DB3["api_keys\n暗号化APIキー"]
-        DB4["send_logs\n送信ログ"]
+        DB1["tenants\nテナント情報"]
+        DB2["prompts\nプロンプト設定"]
+        DB3["send_schedules\n送信時間設定"]
+        DB4["job_logs\nジョブ実行履歴"]
+        DB5["send_logs\n送信ログ"]
+        DB6["api_keys\n暗号化APIキー"]
     end
 
     %% ── n8n ──
     subgraph N8N["🔄 n8n Cloud\nワークフローエンジン"]
         direction TB
-        N1["ワークフロー群\nテナント × 媒体ごとにコピー\nT3_新卒_OfferBox\nA社_新卒_OfferBox\nA社_中途_BizReach"]
-        N2["Cron Trigger\n送信スケジュール管理"]
-        N3["Webhook\nRPA ↔ n8n 通信"]
-        N4["n8n Credentials\nAPIキー・アカウント情報"]
+        N1["Workflow\nテナント × 媒体"]
+        N2["Cron Trigger\n送信スケジュール"]
+        N3["Webhook\nRPA ↔ n8n"]
+        N4["HTTP Node\nDB APIアクセス"]
     end
 
     %% ── AI ──
     subgraph AI["🤖 AI層"]
         direction TB
-        AI1["Claude API\nレジュメ解析\n候補者分類\nメッセージ生成（統合処理）"]
-        AI2["Gemini API\n品質スコアリング\n0–100点"]
+        AI1["Claude API\nレジュメ解析\n候補者分類\nメッセージ生成"]
+        AI2["Gemini API\n品質スコアリング"]
     end
 
     %% ── RPA ──
-    subgraph RPA["🤖 RPA層\nRoboCorp Cloud"]
+    subgraph RPA["🤖 RPA層\nRoboCorp"]
         direction TB
-        R1["ブックマーク取得\n対象候補者リスト"]
-        R2["レジュメスクレイピング\n1件ずつ取得"]
-        R3["メッセージ自動送信\nIPローテーション込み"]
+        R1["ブックマーク取得"]
+        R2["レジュメスクレイピング"]
+        R3["メッセージ送信"]
     end
 
     %% ── 採用媒体 ──
     subgraph MEDIA["🌐 採用媒体"]
         direction TB
-        M1["OfferBox（新卒）"]
-        M2["BizReach（中途）\nPhase2"]
+        M1["OfferBox"]
+        M2["BizReach\nPhase2"]
         M3["Wantedly / Green\nPhase2"]
     end
 
     %% ── 接続 ──
-    U1 -->|操作| FE1
-    U2 -->|操作| FE2
+    U1 --> A1
+    U1 --> A2
 
-    FE1 -->|API呼び出し| BE1
-    FE1 -->|API呼び出し| BE3
-    FE1 -->|API呼び出し| BE4
-    FE2 -->|API呼び出し| BE2
-    FE2 -->|API呼び出し| BE3
-    FE2 -->|API呼び出し| BE4
+    A1 --> DB
+    A2 --> DB
 
-    BE1 -->|read/write| DB1
-    BE2 -->|CRUD| DB1
-    BE4 -->|write| DB2
-    BE4 -->|write| DB4
-    BE5 -->|write/read| DB3
+    DB -->|設定取得| N4
+    N4 --> N1
 
-    BE3 -->|n8n REST API| N1
-    BE3 -->|activate/deactivate| N2
-
-    N1 -->|HTTP Request| AI1
-    N1 -->|HTTP Request| AI2
-    N1 <-->|Webhook| R1
     N2 -->|Cron起動| R1
 
     R1 --> R2
-    R2 -->|レジュメデータ| N3
+    R2 -->|レジュメ| N3
     N3 --> N1
+
+    N1 -->|Claude| AI1
+    N1 -->|Gemini| AI2
+
     N1 -->|生成メッセージ| R3
 
     R2 -->|スクレイピング| M1
     R3 -->|送信| M1
+
     R3 -.->|Phase2| M2
     R3 -.->|Phase2| M3
 
-    %% スタイル
-    classDef userStyle fill:#EFF6FF,stroke:#3B82F6,stroke-width:2px
-    classDef feStyle fill:#F0FDF4,stroke:#22C55E,stroke-width:2px
-    classDef beStyle fill:#FFFBEB,stroke:#F59E0B,stroke-width:2px
-    classDef dbStyle fill:#FEF2F2,stroke:#EF4444,stroke-width:2px
-    classDef n8nStyle fill:#F5F3FF,stroke:#8B5CF6,stroke-width:2px
-    classDef aiStyle fill:#ECFDF5,stroke:#10B981,stroke-width:2px
-    classDef rpaStyle fill:#FFF7ED,stroke:#F97316,stroke-width:2px
-
-    class U1,U2 userStyle
-    class FE1,FE2 feStyle
-    class BE1,BE2,BE3,BE4,BE5 beStyle
-    class DB1,DB2,DB3,DB4 dbStyle
-    class N1,N2,N3,N4 n8nStyle
-    class AI1,AI2 aiStyle
-    class R1,R2,R3 rpaStyle
+    N1 -->|ログ保存| DB4
+    R3 -->|送信ログ| DB5
 ```
