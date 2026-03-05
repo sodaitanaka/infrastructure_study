@@ -24,7 +24,7 @@ flowchart LR
         BE1["認証 / セッション管理\nNextAuth.js + JWT"]
         BE2["テナント管理 API\nCRUD / 状態制御 / 上限管理"]
         BE3["n8n ゲートウェイ\nワークフロー操作ラッパー"]
-        BE4["ログ集約 API\nSheets → DB 取り込み"]
+        BE4["ログ集約 API"]
         BE5["APIキー管理\nAES-256 暗号化保存"]
     end
 
@@ -69,12 +69,6 @@ flowchart LR
         M3["Wantedly / Green\nPhase2"]
     end
 
-    %% ── Google Workspace ──
-    subgraph GWS["📊 Google Workspace"]
-        direction TB
-        G1["Spreadsheets\n承認待ちビュー\n禁止ワード辞書\n送信履歴ログ（Phase1）"]
-    end
-
     %% ── 接続 ──
     U1 -->|操作| FE1
     U2 -->|操作| FE2
@@ -98,7 +92,6 @@ flowchart LR
     N1 -->|HTTP Request| AI2
     N1 <-->|Webhook| R1
     N2 -->|Cron起動| R1
-    N1 -->|Sheets API| G1
 
     R1 --> R2
     R2 -->|レジュメデータ| N3
