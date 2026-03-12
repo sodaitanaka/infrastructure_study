@@ -1,6 +1,36 @@
-# LinkedIn追加機能 実装パターン比較（A〜F）
+# LinkedIn追加機能 実装パターン システムアーキテクチャ比較
 
-## パターンA〜Fのアーキテクチャ図
+---
+
+## アーキテクチャ比較表
+
+| 項目 | A | B | C | D | E | F |
+|---|---|---|---|---|---|---|
+| **〈データソース〉** | | | | | | |
+| 外部データ取得 | BD Dataset (CSV) | BD Dataset + Scraper API | BD Dataset | BD Dataset + Scraper API | PB LinkedIn Scraper | PB LinkedIn Scraper |
+| 差分更新 | ✗ 手動再購入 | ✓ URL指定取得 (¥0.23/件) | ✓ AUTOHUNT内部 | ✓ URL指定取得 (¥0.23/件) | ✓ 定期スクレイプ | ✓ 定期スクレイプ |
+| **〈データ層〉** | | | | | | |
+| DB / ストレージ | Google Sheets | Google Sheets | AUTOHUNT内部DB | カスタムDB (Firestore等) | Google Sheets | Google Sheets |
+| マルチテナント対応 | ✗ | ✗ | △ AH側 | ✓ 独自設計 | ✗ | ✗ |
+| **〈バックエンド〉** | | | | | | |
+| カスタムサーバー | なし | なし | なし | ✓ 要 (Cloud Functions等) | なし | なし |
+| ワークフロー自動化 | n8n Cloud | n8n Cloud | AUTOHUNT (+ n8n) | n8n Cloud | n8n Cloud | n8n Cloud |
+| AI / メッセージ生成 | Claude API | Claude API | AH AI + Claude (opt) | Claude API | Claude API | Claude API |
+| **〈UI層〉** | | | | | | |
+| 操作画面 | Google Sheets | Google Sheets | AUTOHUNT Web UI | カスタム Web UI (React等) | Sheets + PB UI | Sheets + PB UI |
+| カスタムUI開発 | ✗ | ✗ | ✗ | ✓ フルスタック | ✗ | ✗ |
+| **〈DM送信〉** | | | | | | |
+| 送信方式 | 手動 | 手動 | AUTOHUNT自動 | 手動 (URL補助付) | 手動 | PB自動 ⚠️ |
+| LinkedIn API連携 | なし | なし | AH公式連携 | なし | Cookie流用 | Cookie流用 |
+| **〈カスタム開発範囲〉** | | | | | | |
+| 開発スコープ | n8nフロー | n8nフロー | n8nフロー (最小) | UI + API + n8nフロー | n8nフロー | n8nフロー |
+| **〈外部SaaS依存〉** | | | | | | |
+| 使用SaaS | BD | BD | BD + AUTOHUNT | BD | Phantombuster | Phantombuster |
+| ToSリスク | 低 | 低 | 低〜中 | 低 | 中 (グレー) | 高 (BAN risk) |
+
+---
+
+## パターンA〜Fのシステムアーキテクチャ図
 
 ---
 
@@ -8,185 +38,279 @@
 
 **一括購入・買い切り（差分更新なし）**
 
-DatasetをCSVで一括購入してスプシに投入。更新は都度T3担当者が再購入して差し替えるシンプルな構成。
-
 ```mermaid
-flowchart TD
-    A[T3担当者] -->|Dataset一括購入| B[Bright Data\nDataset]
-    B -->|CSV出力| C[Google Sheets]
-    C -->|条件フィルタリング| D[T3担当者\nフィルタ作業]
-    D -->|対象リスト| E[n8n / Claude]
-    E -->|メッセージ生成| F[T3担当者\n最終承認]
-    F -->|手動送信| G[LinkedIn DM]
+flowchart TB
+    subgraph EXT["外部データソース"]
+        BD[Bright Data\nDataset]
+    end
 
-    style B fill:#DBEAFE,stroke:#2563EB
-    style E fill:#D1FAE5,stroke:#10B981
-    style G fill:#0A66C2,color:#fff,stroke:#0A66C2
+    subgraph BACKEND["バックエンド / 自動化"]
+        N8N[n8n Cloud]
+        CLAUDE[Claude API]
+        N8N <-->|メッセージ生成| CLAUDE
+    end
+
+    subgraph DATA["データ / UI 層"]
+        GS[(Google Sheets\nDB 兼 操作UI)]
+    end
+
+    subgraph OUTPUT["送信"]
+        LI[LinkedIn\n手動DM]
+    end
+
+    BD -->|CSV 手動投入| GS
+    GS -->|候補者データ| N8N
+    N8N -->|生成メッセージ書き戻し| GS
+    GS -.->|手動コピペ| LI
+
+    style BD fill:#DBEAFE,stroke:#2563EB
+    style N8N fill:#D1FAE5,stroke:#10B981
+    style CLAUDE fill:#D1FAE5,stroke:#10B981
+    style GS fill:#FEF9C3,stroke:#CA8A04
+    style LI fill:#0A66C2,color:#fff,stroke:#0A66C2
 ```
 
-**費用感**
-- 開発費：80〜120万円
-- 月額ランニング：〜2万円（API費のみ）
-- 初回Dataset購入：数十〜200万円（別途）
+**カスタム開発スコープ：n8nワークフロー のみ**
 
 ---
 
 ## パターンB — BD / Dataset + Scraper API
 
-**初回購入 ＋ 差分更新あり（URL指定で最新情報取得）**
-
-DatasetでURLリストを取得後、Scraper APIに対象URLを渡して最新プロフィール情報を随時取得。転職・情報更新を検知できる。
+**初回購入 ＋ URL指定差分更新**
 
 ```mermaid
-flowchart TD
-    A[T3担当者] -->|初回Dataset購入\nURLリスト取得| B[Bright Data\nDataset]
-    B -->|URLリスト| C[Bright Data\nScraper API]
-    C -->|最新プロフィール取得\n¥0.23/件| D[Google Sheets]
-    D -->|条件フィルタリング| E[T3担当者\nフィルタ作業]
-    E -->|対象リスト| F[n8n / Claude]
-    F -->|メッセージ生成| G[T3担当者\n最終承認]
-    G -->|手動送信| H[LinkedIn DM]
+flowchart TB
+    subgraph EXT["外部データソース"]
+        BDD[Bright Data\nDataset]
+        BDS[Bright Data\nScraper API]
+        BDD -->|URLリスト供給| BDS
+    end
 
-    A -->|差分更新時\nURL再指定| C
+    subgraph BACKEND["バックエンド / 自動化"]
+        N8N[n8n Cloud]
+        CLAUDE[Claude API]
+        N8N <-->|メッセージ生成| CLAUDE
+    end
 
-    style B fill:#DBEAFE,stroke:#2563EB
-    style C fill:#DBEAFE,stroke:#2563EB
-    style F fill:#D1FAE5,stroke:#10B981
-    style H fill:#0A66C2,color:#fff,stroke:#0A66C2
+    subgraph DATA["データ / UI 層"]
+        GS[(Google Sheets\nDB 兼 操作UI)]
+    end
+
+    subgraph OUTPUT["送信"]
+        LI[LinkedIn\n手動DM]
+    end
+
+    BDS -->|最新プロフィール| GS
+    GS -->|候補者データ| N8N
+    N8N -->|生成メッセージ書き戻し| GS
+    GS -.->|手動コピペ| LI
+
+    style BDD fill:#DBEAFE,stroke:#2563EB
+    style BDS fill:#DBEAFE,stroke:#2563EB
+    style N8N fill:#D1FAE5,stroke:#10B981
+    style CLAUDE fill:#D1FAE5,stroke:#10B981
+    style GS fill:#FEF9C3,stroke:#CA8A04
+    style LI fill:#0A66C2,color:#fff,stroke:#0A66C2
 ```
 
-**費用感**
-- 開発費：100〜150万円
-- 月額ランニング：2〜4万円（Scraper API ¥0.23/件 + API費）
-- 初回Dataset購入：別途
+**カスタム開発スコープ：n8nワークフロー のみ**
 
 ---
 
 ## パターンC — BD + AUTOHUNT 連携
 
-**BDデータ × AUTOHUNTで転職潜在層にDM送信**
-
-BDで取得したデータをAUTOHUNTにインポート。転職兆候スコアリングとLinkedIn一括DM送信機能を活用。
+**AUTOHUNT SaaSによるスコアリング + 自動DM**
 
 ```mermaid
-flowchart TD
-    A[T3担当者] -->|Dataset購入| B[Bright Data\nDataset]
-    B -->|データインポート| C[AUTOHUNT]
-    A -->|フィルタ条件設定| C
-    C -->|転職兆候スコアリング\n特許AI技術| D[スコアリング結果]
-    D -->|高スコア候補者| E[n8n / Claude\n※オプション]
-    E -->|カスタムメッセージ| F[AUTOHUNT\nDM自動送信]
-    D -->|AHテンプレート| F
-    F -->|LinkedIn API経由\n一括自動送信| G[LinkedIn DM]
+flowchart TB
+    subgraph EXT["外部データソース"]
+        BD[Bright Data\nDataset]
+    end
 
-    style B fill:#DBEAFE,stroke:#2563EB
-    style C fill:#FEF3C7,stroke:#F59E0B
-    style E fill:#D1FAE5,stroke:#10B981
-    style G fill:#0A66C2,color:#fff,stroke:#0A66C2
+    subgraph SAAS["AUTOHUNT SaaS"]
+        AH_DB[(AUTOHUNT\n内部DB)]
+        AH_AI[転職兆候スコアリング\n特許AI]
+        AH_UI[AUTOHUNT\nWeb UI]
+        AH_SEND[LinkedIn\n自動DM送信]
+        AH_DB --> AH_AI --> AH_UI
+        AH_UI --> AH_SEND
+    end
+
+    subgraph BACKEND["バックエンド / 自動化（オプション）"]
+        N8N[n8n Cloud]
+        CLAUDE[Claude API]
+        N8N <-->|カスタムメッセージ生成| CLAUDE
+    end
+
+    subgraph OUTPUT["送信"]
+        LI[LinkedIn\nAPI 公式連携]
+    end
+
+    BD -->|データインポート| AH_DB
+    N8N -.->|カスタムメッセージ投入\n※オプション| AH_SEND
+    AH_SEND -->|一括自動送信| LI
+
+    style BD fill:#DBEAFE,stroke:#2563EB
+    style AH_DB fill:#FEF3C7,stroke:#F59E0B
+    style AH_AI fill:#FEF3C7,stroke:#F59E0B
+    style AH_UI fill:#FEF3C7,stroke:#F59E0B
+    style AH_SEND fill:#FEF3C7,stroke:#F59E0B
+    style N8N fill:#D1FAE5,stroke:#10B981
+    style CLAUDE fill:#D1FAE5,stroke:#10B981
+    style LI fill:#0A66C2,color:#fff,stroke:#0A66C2
 ```
 
-**費用感**
-- 開発費：50〜80万円
-- 月額ランニング：AUTOHUNT月額 + API費（AH料金要確認）
-- 初回Dataset購入：別途
+**カスタム開発スコープ：AHインポート設定 + n8nワークフロー（オプション）**
 
 ---
 
-## パターンD — BD / Dataset + Scraper API + フロント
+## パターンD — BD / Dataset + Scraper API + カスタムフロント
 
-**差分更新あり ＋ 専用UI（マルチテナント対応）**
-
-BパターンにWebフロント画面を追加。候補者一覧・フィルタ・URLワンクリック補助を実装。複数クライアント展開向け。
+**差分更新あり ＋ 専用Web UI（マルチテナント対応）**
 
 ```mermaid
-flowchart TD
-    A[T3担当者] -->|初回Dataset購入\nURLリスト取得| B[Bright Data\nDataset]
-    B -->|URLリスト| C[Bright Data\nScraper API]
-    C -->|最新プロフィール取得| D[(Database\nマルチテナント対応)]
-    D -->|データ表示| E[Web UI\nReact / Vue]
-    E -->|フィルタ・承認操作| F[T3担当者\nUI上で作業]
-    F -->|URLクリック補助| G[LinkedIn\nプロフィール表示]
-    F -->|対象リスト| H[n8n / Claude]
-    H -->|メッセージ生成| F
-    G -->|手動DM送信| I[LinkedIn DM]
+flowchart TB
+    subgraph EXT["外部データソース"]
+        BDD[Bright Data\nDataset]
+        BDS[Bright Data\nScraper API]
+        BDD -->|URLリスト供給| BDS
+    end
 
-    A -->|差分更新時\nURL再指定| C
+    subgraph BACKEND["バックエンド / 自動化"]
+        API[API Server\nCloud Functions等]
+        N8N[n8n Cloud]
+        CLAUDE[Claude API]
+        N8N <-->|メッセージ生成| CLAUDE
+        API <-->|ワークフロー連携| N8N
+    end
 
-    style B fill:#DBEAFE,stroke:#2563EB
-    style C fill:#DBEAFE,stroke:#2563EB
-    style D fill:#EDE9FE,stroke:#7C3AED
-    style E fill:#EDE9FE,stroke:#7C3AED
-    style H fill:#D1FAE5,stroke:#10B981
-    style I fill:#0A66C2,color:#fff,stroke:#0A66C2
+    subgraph DATA["データ層"]
+        DB[(カスタムDB\nFirestore / PostgreSQL等\nマルチテナント設計)]
+    end
+
+    subgraph UI["UI 層"]
+        WEB[カスタム Web UI\nReact / Vue\n候補者一覧・フィルタ・承認]
+    end
+
+    subgraph OUTPUT["送信"]
+        LI[LinkedIn\n手動DM\nURLクリック補助]
+    end
+
+    BDS -->|最新プロフィール| API
+    API -->|保存| DB
+    DB -->|データ供給| WEB
+    WEB -->|操作・承認| API
+    API --> N8N
+    N8N -->|生成メッセージ| DB
+    WEB -.->|URLクリック補助| LI
+
+    style BDD fill:#DBEAFE,stroke:#2563EB
+    style BDS fill:#DBEAFE,stroke:#2563EB
+    style API fill:#EDE9FE,stroke:#7C3AED
+    style DB fill:#EDE9FE,stroke:#7C3AED
+    style WEB fill:#EDE9FE,stroke:#7C3AED
+    style N8N fill:#D1FAE5,stroke:#10B981
+    style CLAUDE fill:#D1FAE5,stroke:#10B981
+    style LI fill:#0A66C2,color:#fff,stroke:#0A66C2
 ```
 
-**費用感**
-- 開発費：200〜280万円（パターンB + UI開発 80〜130万円）
-- 月額ランニング：2〜4万円（Scraper API + API費）
-- 初回Dataset購入：別途
-- 移行推奨：マルチテナント展開確定後にB→D
+**カスタム開発スコープ：Web UI + API Server + DB設計 + n8nワークフロー（フルスタック）**
 
 ---
 
 ## パターンE — Phantombuster / スクレイピングのみ
 
-**PBでデータ収集・メッセージ生成（DM送信は人力）**
-
-PB LinkedIn Profile ScraperでデータをCSV取得後、n8nでメッセージ生成。初期Dataset購入費なしで始められる。
+**PBでデータ収集 + n8nでメッセージ生成（DM送信は手動）**
 
 ```mermaid
-flowchart TD
-    A[T3担当者] -->|検索条件設定| B[Phantombuster]
-    B -->|LinkedIn自動スクレイピング\n$69〜$199/月| C[LinkedIn\nプロフィールデータ]
-    C -->|CSV出力| D[Google Sheets]
-    D -->|条件フィルタリング| E[T3担当者\nフィルタ作業]
-    E -->|対象リスト| F[n8n / Claude]
-    F -->|メッセージ生成| G[T3担当者\n最終承認]
-    G -->|手動送信| H[LinkedIn DM]
+flowchart TB
+    subgraph EXT["外部データソース"]
+        PB[Phantombuster\nLinkedIn Profile Scraper\nSaaS]
+        LIN_SRC[LinkedIn\n※スクレイピング対象]
+        PB -->|スクレイピング\nCookie流用| LIN_SRC
+    end
 
-    style B fill:#FEE2E2,stroke:#EF4444
-    style F fill:#D1FAE5,stroke:#10B981
-    style H fill:#0A66C2,color:#fff,stroke:#0A66C2
+    subgraph BACKEND["バックエンド / 自動化"]
+        N8N[n8n Cloud]
+        CLAUDE[Claude API]
+        N8N <-->|メッセージ生成| CLAUDE
+    end
+
+    subgraph DATA["データ / UI 層"]
+        GS[(Google Sheets\nDB 兼 操作UI)]
+    end
+
+    subgraph OUTPUT["送信"]
+        LI[LinkedIn\n手動DM]
+    end
+
+    PB -->|CSV出力| GS
+    GS -->|候補者データ| N8N
+    N8N -->|生成メッセージ書き戻し| GS
+    GS -.->|手動コピペ| LI
+
+    style PB fill:#FEE2E2,stroke:#EF4444
+    style LIN_SRC fill:#FEE2E2,stroke:#EF4444
+    style N8N fill:#D1FAE5,stroke:#10B981
+    style CLAUDE fill:#D1FAE5,stroke:#10B981
+    style GS fill:#FEF9C3,stroke:#CA8A04
+    style LI fill:#0A66C2,color:#fff,stroke:#0A66C2
 ```
 
-> ⚠️ **リスク注意**：LinkedInのToSグレーゾーン。レート制限遵守により実運用上のBANリスクは管理可能。
+> ⚠️ **リスク**：LinkedIn ToS グレーゾーン。レート制限遵守で実運用BANリスクは管理可能。
 
-**費用感**
-- 開発費：80〜120万円
-- 月額ランニング：2〜5万円（PB $69〜$199/月 + API費）
-- 初期Dataset購入：不要（コスト優位）
+**カスタム開発スコープ：n8nワークフロー のみ**
 
 ---
 
 ## パターンF — Phantombuster / DM自動送信（PoC）
 
-**PBでDM自動送信まで試験的に実施（BAN・ToSリスクあり）**
-
-Phantombuster Message Senderで自動DM送信を試験的に実施。LinkedInアカウントへの影響が大きく、**商用本番での継続利用は非推奨**。
+**PBでスクレイピング〜DM送信まで自動化（BAN・ToSリスク高）**
 
 ```mermaid
-flowchart TD
-    A[T3担当者] -->|条件設定| B[Phantombuster]
-    B -->|LinkedIn自動スクレイピング| C[LinkedIn\nプロフィールデータ]
-    C -->|データ取得| D[Google Sheets]
-    D -->|条件フィルタリング| E[T3担当者\nフィルタ作業]
-    E -->|対象リスト| F[n8n / Claude]
-    F -->|メッセージ生成| G[T3担当者\n最終承認]
-    G -->|自動送信リスト渡し| H[Phantombuster\nMessage Sender]
-    H -->|LinkedIn自動DM一括送信\n⚠️ BAN高リスク| I[LinkedIn DM]
+flowchart TB
+    subgraph EXT["外部データソース"]
+        PB[Phantombuster\nLinkedIn Profile Scraper]
+        LIN_SRC[LinkedIn\n※スクレイピング対象]
+        PB -->|スクレイピング\nCookie流用| LIN_SRC
+    end
 
-    style B fill:#FEE2E2,stroke:#EF4444
-    style H fill:#FEE2E2,stroke:#EF4444
-    style F fill:#D1FAE5,stroke:#10B981
-    style I fill:#0A66C2,color:#fff,stroke:#0A66C2
+    subgraph BACKEND["バックエンド / 自動化"]
+        N8N[n8n Cloud]
+        CLAUDE[Claude API]
+        N8N <-->|メッセージ生成| CLAUDE
+    end
+
+    subgraph DATA["データ / UI 層"]
+        GS[(Google Sheets\nDB 兼 操作UI)]
+    end
+
+    subgraph AUTOSEND["自動送信 ⚠️ HIGH RISK"]
+        PBSEND[Phantombuster\nMessage Sender\nCookie流用・自動DM]
+    end
+
+    subgraph OUTPUT["送信"]
+        LI[LinkedIn\n自動DM\n⚠️ BAN高リスク]
+    end
+
+    PB -->|プロフィールデータ| GS
+    GS -->|候補者データ| N8N
+    N8N -->|生成メッセージ書き戻し| GS
+    GS -->|送信リスト| PBSEND
+    PBSEND -->|一括自動送信| LI
+
+    style PB fill:#FEE2E2,stroke:#EF4444
+    style LIN_SRC fill:#FEE2E2,stroke:#EF4444
+    style PBSEND fill:#FEE2E2,stroke:#EF4444
+    style N8N fill:#D1FAE5,stroke:#10B981
+    style CLAUDE fill:#D1FAE5,stroke:#10B981
+    style GS fill:#FEF9C3,stroke:#CA8A04
+    style LI fill:#7F1D1D,color:#fff,stroke:#7F1D1D
 ```
 
-> 🚨 **HIGH RISK**：LinkedIn ToS違反。週100件超でアカウント停止リスク大。T3メインアカウントでの本番利用は不可。PoC・検証用途限定。
+> 🚨 **HIGH RISK**：LinkedIn ToS 違反。週100件超でアカウント停止。T3メインアカウントでの本番利用不可。PoC・テスト用途限定。
 
-**費用感**
-- 開発費：130〜180万円
-- 月額ランニング：5〜10万円
-- 初期Dataset購入：不要
+**カスタム開発スコープ：n8nワークフロー のみ**
 
 ---
 
@@ -198,7 +322,7 @@ flowchart TD
 | 差分更新 | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | DM送信 | 手動 | 手動 | 自動（AH） | 手動 | 手動 | 自動（PB）⚠️ |
 | 専用UI | ✗ | ✗ | AH UI | ✓ Web UI | ✗ | ✗ |
-| 初期Dataset費 | 要 | 要 | 要 | 要 | 不要 | 不要 |
-| 開発費 | 80〜120万 | 100〜150万 | 50〜80万 | 200〜280万 | 80〜120万 | 130〜180万 |
-| 月額ランニング | 〜2万 | 2〜4万 | AH月額+ | 2〜4万 | 2〜5万 | 5〜10万 |
-| リスク | 低 | 低 | 低〜中 | 低 | 中 | 高 |
+| カスタムDB | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
+| カスタムサーバー | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
+| マルチテナント | ✗ | ✗ | △ | ✓ | ✗ | ✗ |
+| ToSリスク | 低 | 低 | 低〜中 | 低 | 中 | 高 |
