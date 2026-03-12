@@ -6,7 +6,7 @@
 
 | プラン | A | B | C | D | E | F |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| 費用 | 80〜120万 | 120〜180万 | 100〜150万 | 約1,000万 | 100〜150万 | 150〜200万 |
+| 費用 | 80〜120万 | 120〜180万 | 100〜150万 | 約1,000万前後 | 100〜150万 | 150〜200万 |
 
 ### 各作業項目の内訳メモ
 
@@ -349,6 +349,170 @@ flowchart TB
 > 🚨 **HIGH RISK**：LinkedIn ToS 違反。週100件超でアカウント停止。T3メインアカウントでの本番利用不可。PoC・テスト用途限定。
 
 **カスタム開発スコープ：n8nワークフロー のみ**
+
+---
+
+## 発展パターンG — BD + 転職兆候スコアリング（LLM）
+
+**BDデータ × LLMスコアリングで転職しそうな人を絞り込む**
+
+```mermaid
+flowchart TB
+    subgraph EXT["外部データソース"]
+        BD[Bright Data\nDataset]
+    end
+
+    subgraph BACKEND["バックエンド / 自動化"]
+        N8N[n8n Cloud]
+        CLAUDE[Claude API]
+        SCORE[転職兆候スコアリング\nLLMプロフィール分析]
+        N8N -->|プロフィールデータ| SCORE
+        SCORE -->|スコア付与| N8N
+        N8N <-->|メッセージ生成| CLAUDE
+    end
+
+    subgraph DATA["データ / UI 層"]
+        GS[(Google Sheets\nスコア付き候補者一覧)]
+    end
+
+    subgraph OUTPUT["送信"]
+        LI[LinkedIn\n手動DM]
+    end
+
+    BD -->|CSV 一括購入| GS
+    GS -->|候補者データ| N8N
+    N8N -->|スコア + メッセージ書き戻し| GS
+    GS -.->|スコアフィルタ → 手動コピペ| LI
+
+    style BD fill:#DBEAFE,stroke:#2563EB
+    style N8N fill:#D1FAE5,stroke:#10B981
+    style CLAUDE fill:#D1FAE5,stroke:#10B981
+    style SCORE fill:#EDE9FE,stroke:#7C3AED
+    style GS fill:#FEF9C3,stroke:#CA8A04
+    style LI fill:#0A66C2,color:#fff,stroke:#0A66C2
+```
+
+> 💡 **特徴**：職歴年数・昇進停滞・会社規模変化・スキルギャップをLLMで判定。スコア上位のみをDM対象に絞ることで送付精度が向上。
+
+**カスタム開発スコープ：n8nワークフロー + LLMスコアリングロジック**
+
+**開発費目安：120〜160万円（パターンA + スコアリング実装）**
+
+---
+
+## 発展パターンH — BD + ベクトルDB + LLM意味検索
+
+**候補者DBをベクトル化し「転職しそうな人」をLLM自然言語クエリで抽出**
+
+```mermaid
+flowchart TB
+    subgraph EXT["外部データソース"]
+        BD[Bright Data\nDataset / Scraper API]
+    end
+
+    subgraph BACKEND["バックエンド / 自動化"]
+        N8N[n8n Cloud]
+        EMB[Embedding処理\nOpenAI / Claude]
+        CLAUDE[Claude API]
+        N8N -->|プロフィールデータ| EMB
+        N8N <-->|メッセージ生成| CLAUDE
+    end
+
+    subgraph DATA["データ層"]
+        VECDB[(ベクトルDB\npgvector / Pinecone\n候補者プロフィール格納)]
+        GS[(Google Sheets\n承認 / 操作UI)]
+        EMB -->|ベクトル化して格納| VECDB
+    end
+
+    subgraph SEARCH["LLM意味検索"]
+        LLM_Q[LLMが自然言語クエリを生成\n例：「パナソニック掃除機部門の\nエンジニア職」]
+        LLM_Q -->|ベクトル検索| VECDB
+    end
+
+    subgraph OUTPUT["送信"]
+        LI[LinkedIn\n手動DM]
+    end
+
+    BD -->|プロフィールデータ| N8N
+    VECDB -->|スコア順に候補者抽出| N8N
+    N8N -->|生成メッセージ書き戻し| GS
+    GS -.->|手動コピペ| LI
+
+    style BD fill:#DBEAFE,stroke:#2563EB
+    style N8N fill:#D1FAE5,stroke:#10B981
+    style EMB fill:#EDE9FE,stroke:#7C3AED
+    style CLAUDE fill:#D1FAE5,stroke:#10B981
+    style VECDB fill:#EDE9FE,stroke:#7C3AED
+    style LLM_Q fill:#EDE9FE,stroke:#7C3AED
+    style GS fill:#FEF9C3,stroke:#CA8A04
+    style LI fill:#0A66C2,color:#fff,stroke:#0A66C2
+```
+
+> 💡 **特徴**：スプシのフィルタでは不可能な「部署単位・意味的絞り込み」が可能。表記揺れにも強い。BD Dataset 5,000件〜蓄積後に有効化するのが自然。Pattern B/G へのアドオンとして追加できる。
+
+**カスタム開発スコープ：n8nワークフロー + Embedding処理 + ベクトルDB構築**
+
+**開発費目安：+100〜150万円（Pattern B/G へのアドオン）**
+
+---
+
+## 発展パターンI — ニュース取得 × LinkedInスカウト連携（アドオン）
+
+**M&A・部門切り出し等のニュースをトリガーにスカウトを最適化**
+
+```mermaid
+flowchart TB
+    subgraph NEWS["ニュースソース"]
+        SITES[PR TIMES / 日経等\n特定サイト固定クローリング]
+    end
+
+    subgraph BACKEND["バックエンド / 自動化"]
+        N8N[n8n Cloud]
+        LLM_EVT[LLMでイベント種別判定\nM&A / 部門切り出し / レイオフ等]
+        CLAUDE[Claude API]
+        N8N -->|ニュース本文| LLM_EVT
+        N8N <-->|スカウトメッセージ生成| CLAUDE
+    end
+
+    subgraph DATA["データ層"]
+        VECDB[(ベクトルDB\n候補者プロフィール\n※Pattern H が前提)]
+        GS[(Google Sheets\n承認 / 操作UI)]
+    end
+
+    subgraph SEARCH["候補者抽出"]
+        MATCH[会社名・部門で\nベクトルDB検索\n対象候補者リスト生成]
+        LLM_EVT -->|会社名・部門抽出| MATCH
+        MATCH -->|検索| VECDB
+    end
+
+    subgraph OUTPUT["送信"]
+        LI[LinkedIn\n手動DM]
+    end
+
+    SITES -->|定期クローリング| N8N
+    VECDB -->|マッチした候補者| N8N
+    N8N -->|生成メッセージ書き戻し| GS
+    GS -.->|T3承認 → 手動コピペ| LI
+
+    style SITES fill:#FEF9C3,stroke:#CA8A04
+    style N8N fill:#D1FAE5,stroke:#10B981
+    style LLM_EVT fill:#EDE9FE,stroke:#7C3AED
+    style CLAUDE fill:#D1FAE5,stroke:#10B981
+    style VECDB fill:#EDE9FE,stroke:#7C3AED
+    style MATCH fill:#EDE9FE,stroke:#7C3AED
+    style GS fill:#FEF9C3,stroke:#CA8A04
+    style LI fill:#0A66C2,color:#fff,stroke:#0A66C2
+```
+
+> 💡 **具体例**：「パナソニックが掃除機部門を切り出し」→ 対象部門のエンジニア職をベクトルDBから即抽出 → スカウトメッセージ生成 → 送付
+>
+> **前提**：発展パターンH（ベクトルDB）が実装済みであること。ベクトルDB未実装でも「会社名フィルタ + スプシ出力」として単体でも成立する。
+
+**カスタム開発スコープ：特定サイトクローリング + LLMイベント判定 + ベクトル検索連携**
+
+**開発費目安**
+- 特定サイト固定型（推奨）：+30〜60万円（固定サイト数に依存）
+- 汎用Web検索型：+100〜200万円以上（スコープ要確認）
 
 ---
 
