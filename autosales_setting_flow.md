@@ -4,90 +4,79 @@
 flowchart TD
     classDef userTask fill:#fffbe6,stroke:#d4a017,stroke-width:1px;
     classDef systemTask fill:#f0f7ff,stroke:#0052cc,stroke-width:1px;
-    classDef mailTask fill:#f6ffed,stroke:#52c41a,stroke-width:1px;
-    classDef section fill:#fafafa,stroke:#999,stroke-width:2px,stroke-dasharray:5 5;
-    classDef monthly fill:#fff0f6,stroke:#eb2f96,stroke-width:1px;
-    classDef yearly fill:#f9f0ff,stroke:#722ed1,stroke-width:1px;
+    classDef mailA fill:#e6fffb,stroke:#13c2c2,stroke-width:2px;
+    classDef mailB fill:#f6ffed,stroke:#52c41a,stroke-width:2px;
+    classDef mailC fill:#fff0f6,stroke:#eb2f96,stroke-width:2px;
 
-    %% ===== 起点 =====
-    F1(["フロー①\n営業担当が手動 または 代理入力\n参画フォーム送信\n（プランの種類・契約数を回収）"]):::userTask
+    %% ===== フロー① 起点 =====
+    F1(["フロー①\n営業担当が手動 または 代理入力\n参画フォーム送信\nプランの種類・契約数を回収"]):::userTask
 
-    F1 --> S1 & S2
+    F1 --> MA
+
+    %% ===== メールA =====
+    subgraph MA["メールA　送信タイミング：参画フォーム回答時　To アカウント担当者"]
+        direction LR
+        MA1["商談フィードバック系\n・対象者入力リスト\n・応酬話法URL"]:::mailA
+        MA2["数値レポート系\n・組織図入力\n・レポート対象者リスト入力"]:::mailA
+    end
+
+    MA --> SYS1 & SYS2
 
     %% ===== 商談フィードバック系 =====
-    subgraph S1["サービス① 商談フィードバック系 初期設定"]
+    subgraph SYS1["サービス① 商談フィードバック系"]
         direction TB
-        F3(["フロー③\nメールで入力依頼\n氏名・所属・上長アドレスなどを回収\n担当：アカウント担当者"]):::mailTask
-        F3GEN[商談フォームを生成]:::systemTask
-        F3 --> F3GEN
+        G1[アカウント担当者が\n対象者・応酬話法URLを入力]:::userTask
+        G1 --> G2[商談フィードバックフォームを生成]:::systemTask
+        G2 --> MB
+
+        MB(["メールB\n商談フィードバックURL作成完了通知\nTo アカウント担当者\nタイミング：日次・URL作成完了時"]):::mailB
+
+        MB --> MG[アカウント担当者が\nURLを対象者へ共有]:::userTask
+        MG --> CF["商談フォームへの\n回答（随時）"]:::userTask
+        CF --> MB2
+
+        MB2(["メールB-2\n商談フィードバックレポート配信\nTo 本人・上長\nタイミング：商談フォーム回答後"]):::mailB
     end
 
-    %% ===== 数値フィードバック系 =====
-    subgraph S2["サービス② 数値フィードバック系 初期設定"]
+    %% ===== 数値レポート系 =====
+    subgraph SYS2["サービス② 数値レポート系"]
         direction TB
+        H1[アカウント担当者が\n組織図・対象者リストを入力]:::userTask
+        H1 --> MC
 
-        F2(["フロー②\nメールA 送信\n組織図を入力\n全エリア・全店舗を入力依頼\n担当：アカウント担当者"]):::mailTask
+        MC(["メールC\n年間個人目標・昨年個人数値の回収依頼\nTo アカウント担当者　CC T3\nタイミング：要確認"]):::mailC
 
-        F2 --> F5
+        MC --> H2[アカウント担当者が\n年間目標・昨年実績を入力]:::userTask
+        H2 --> H3[季節指数算出\n通期目標の反映]:::systemTask
 
-        F5(["フロー⑤\nメールA 送信\n個人IDの数量に合わせて\n入力リストを生成"]):::mailTask
+        H3 --> MC2
 
-        F5 --> F6A & F6B & F6C
+        MC2(["メールC-2\n月次個人実績の入力依頼\nTo 店舗責任者　CC T3\nタイミング：毎月1日"]):::mailC
 
-        subgraph LG["フロー⑥ リンク生成（メールCで閲覧リンク共有）"]
-            direction LR
-            F6A["個人リンク生成"]:::systemTask
-            F6B["店舗リンク生成"]:::systemTask
-            F6C["エリアリンク生成"]:::systemTask
-        end
+        MC2 --> H4[店舗責任者が\n月次実績を入力]:::userTask
+        H4 --> H5[実績・GAPデータ・達成率を反映\n全ユーザー平均値算出]:::systemTask
+        H5 --> MC3
 
-        F6A & F6B & F6C --> INIT
+        MC3(["メールC-3\n月次・四半期・半期・年次レポート配信\nTo 各種責任者　CC T3\nタイミング：毎月10日"]):::mailC
 
-        subgraph INIT["初回のみの動作"]
-            direction TB
-            F6D(["フロー⑥（初回のみ）\n昨年の年間実績を入力\n6項目 × 従業員人数 × 12ヶ月\n担当：各店舗店長"]):::userTask
-            F6E(["フロー⑥\nメールB 送信\n年間の個人目標を入力\n6項目 × 営業人数 × 12ヶ月\n担当：各店舗店長"]):::mailTask
-            F6D --> F6E
-        end
+        H5 --> MC4
 
-        F6E --> SI[昨年データをもとに季節指数算出]:::systemTask
-        SI --> TG[通期分の目標を反映]:::systemTask
-    end
+        MC4(["メールC-4\n年間目標入力依頼\nTo アカウント担当者　CC T3\nタイミング：期初1日"]):::mailC
 
-    %% ===== 月次の動作 =====
-    TG --> MONTHLY
-
-    subgraph MONTHLY["月次の動作"]
-        direction TB
-        F7(["フロー⑦\nトリガー：フォーム回答\n月次実績を入力\n6項目 × 営業人数\n担当：各店舗店長"]):::userTask
-        F7 --> R1[月次実績データ反映\n目標GAPデータ反映\n達成率データ反映]:::systemTask
-        R1 --> R2[全ユーザーの平均数値算出・反映]:::systemTask
-        R2 --> F8(["フロー⑧\nトリガー：月次起動\n各社の事業年度をもとに\n月次・四半期・半期・年次を\nメールで通知"]):::mailTask
-    end
-
-    %% ===== 年次の動作 =====
-    MONTHLY --> YEARLY
-
-    subgraph YEARLY["年次の動作"]
-        direction TB
-        Y1[通期目標 回収・反映]:::yearly
-        Y1 --> Y2[昨期データから季節指数を再算出]:::yearly
-        Y2 --> Y3[次年度の月次サイクルへ移行]:::yearly
+        MC4 --> H2
     end
 ```
 
 ---
 
-## フロー番号サマリー
+## メール一覧
 
-| フロー | サービス | トリガー | 担当 | 内容 |
-|---|---|---|---|---|
-| ① | 共通 | 営業担当（手動） | 営業担当 / アカウント担当 | 参画フォーム送信。プランの種類・契約数を回収 |
-| ③ | 商談FB系 | フロー①の完了 | アカウント担当者 | メールで氏名・所属・上長アドレスなどを回収し商談フォームを生成 |
-| ② | 数値FB系 | フロー①の完了 | アカウント担当者 | メールAで組織図入力依頼。全エリア・全店舗を登録 |
-| ⑤ | 数値FB系 | フロー②の完了 | システム | 個人IDの数量に合わせて入力リストを自動生成 |
-| ⑥（リンク共有） | 数値FB系 | フロー⑤の完了 | システム | メールCで個人/店舗/エリアの閲覧リンクを生成・共有 |
-| ⑥（初回のみ） | 数値FB系 | フロー⑤の完了 | 各店舗店長 | 昨年年間実績を入力（6項目×従業員人数×12ヶ月）|
-| ⑥（目標入力） | 数値FB系 | フロー⑤の完了 | 各店舗店長 | メールBで年間個人目標を入力（6項目×営業人数×12ヶ月） |
-| ⑦ | 数値FB系 | フォーム回答 | 各店舗店長 | 月次実績を入力（6項目×営業人数） |
-| ⑧ | 数値FB系 | 月次起動 | システム | 各社の事業年度をもとに月次・四半期・半期・年次でメール通知 |
+| メール名 | メールで通知する内容 | 宛先 | タイミング |
+|---|---|---|---|
+| メールA | ①商談FB系：対象者入力リスト・応酬話法URL<br>②数値レポート系：組織図入力・レポート対象者リスト入力 | アカウント担当者 | 参画フォーム回答時 |
+| メールB | 商談フィードバックURL作成完了通知 | アカウント担当者 | 日次起動・URL作成完了時 |
+| メールB-2 | 商談フィードバックレポート | 本人 / 上長 | 商談フォーム回答後・フィードバック生成完了時 |
+| メールC | 年間個人目標の回収依頼、昨年個人数値の回収依頼 | アカウント担当者（CC: T3） | 要確認 |
+| メールC-2 | 月次個人実績の入力依頼 | 店舗責任者（CC: T3） | 毎月1日 |
+| メールC-3 | 月次・四半期・半期・年次レポート完成通知 | 各種責任者（CC: T3） | 毎月10日 |
+| メールC-4 | 年間目標入力依頼 | アカウント担当者（CC: T3） | 期初1日 |
