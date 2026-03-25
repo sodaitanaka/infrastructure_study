@@ -1,66 +1,84 @@
-```mermaid
-
 flowchart TB
 
-    subgraph P0["フェーズ 0　トリガー検知"]
-        direction LR
-        HS_CRM["HubSpot CRM\n────────────\n会社オブジェクト\nプロパティ: 与信チェック\n技術: HubSpot Workflow\n料金: HubSpot有償プラン"]
-        HS_WH["Webhook 送信\n────────────\nイベント: プロパティ変更\n条件: 与信チェック = はい\n技術: HubSpot Webhook設定\n送信先: Firebase Functions URL"]
-        HS_CRM -->|"① プロパティ変更検知"| HS_WH
+    subgraph P0["フェーズ 0　目標データ投入"]
+        SS["Google スプレッドシート\n────────────\nデータ: tgt / gpu / tv / tr\n役割: 期初の目標値マスター\n操作者: 管理者が手入力\n技術: Google Sheets API v4"]
     end
 
-    subgraph P1["フェーズ 1　バックエンド受信・APIキー取得"]
-        direction LR
-        FB_FUNC["Firebase Functions\n────────────\nランタイム: Node.js\nホスト: Google Cloud\n役割: Webhookエンドポイント\n        / オーケストレーター"]
-        AT["Airtable\n────────────\nテーブル: エンドユーザーマスタ\n保管データ: RM APIキー\n暗号化: AES-256\n役割: シークレットストア"]
-        SENTRY["Sentry\n────────────\nSDK: @sentry/node\n役割: エラー監視・アラート\n通知先: Slack / メール"]
-        HS_WH -->|"② Webhook受信"| FB_FUNC
-        FB_FUNC -->|"③ APIキー取得\n(会社IDで検索)"| AT
-        AT -->|"③' 復号済みAPIキー返却"| FB_FUNC
-        FB_FUNC -->|"例外発生時 エラー送信"| SENTRY
+    subgraph P1["フェーズ 1　バッチ取込 (n8n)"]
+        N8N_B["n8n バッチ ワークフロー\n────────────\nホスト: n8n Cloud または Self-hosted\nトリガー: Cron（期初・定期）\n役割: SS → DB 目標値 取込\n技術: Google Sheets ノード\n      + PostgreSQL ノード"]
+        N8N_M["n8n 手動トリガー ワークフロー\n────────────\nトリガー: 管理者が手動実行\n役割: 確定月実績を SS → DB 上書き\n技術: Webhook ノード\n      + PostgreSQL UPDATE ノード"]
+        SS -->|"① 期初バッチ実行\nSheetsAPI 読取"| N8N_B
+        SS -->|"② 手動トリガー実行\nSheetsAPI 読取"| N8N_M
     end
 
-    subgraph P2["フェーズ 2　外部API実行"]
-        direction LR
-        RM_API["リスクモンスター API\n────────────\nエンドポイント: RM社提供\n認証: エンドユーザーの APIキー\n返却値: 格付 / 評点 / 反社\n        + RM詳細画面URL\n注意: APIキーはFLUEDが\n      保持せず必ず中継のみ"]
-        FB_FUNC -->|"④ API実行\n(エンドユーザーのキーで)\nHTTP POST"| RM_API
-        RM_API -->|"⑤ 結果返却\n格付・評点・反社\n+ 詳細URL"| FB_FUNC
+    subgraph P2["フェーズ 2　データベース層"]
+        MT["monthly_targets\n────────────\nDB: PostgreSQL（未定 ⚠️要確認）\nカラム: staff_id / month\n        tgt / gpu / tv★ / tr★\nINDEX: staff_id + month"]
+        MA["monthly_actuals\n────────────\nDB: PostgreSQL（未定 ⚠️要確認）\nカラム: staff_id / month\n        act / ag / vis\n        enq★ / est★\n        st: done/active/future"]
+        CAL["staff_calendars ⚠️テーブル未定義\n────────────\nDB: PostgreSQL\nカラム: staff_id / month\n        off_days: JSON配列\n        working_days: INT"]
+        SIM["staff_sim_settings ⚠️テーブル未定義\n────────────\nDB: PostgreSQL\nカラム: staff_id / month\n        sim_vals: JSONB\n        sim_start_day: DATE"]
+        N8N_B -->|"③ INSERT/UPDATE\nmonthly_targets"| MT
+        N8N_M -->|"④ UPDATE\nmonthly_actuals"| MA
     end
 
-    subgraph P3["フェーズ 3　HubSpot書き戻し"]
-        direction LR
-        HS_OBJ["掲載情報オブジェクト\n────────────\n技術: HubSpot カスタムオブジェクト\nAPIキー: HubSpot Private App\n書込フィールド:\n  与信結果（格付/評点/反社）\n  RM詳細URL"]
-        HS_REL["会社オブジェクト\n────────────\n技術: HubSpot 標準オブジェクト\n操作: 掲載情報と関連付け"]
-        FB_FUNC -->|"⑥ 書込\nHubSpot API v3"| HS_OBJ
-        HS_OBJ -.->|"⑦ アソシエーション\n関連付け"| HS_REL
+    subgraph P3["フェーズ 3　API層"]
+        API1["GET /api/monthly/:staff_id\n────────────\nランタイム: Next.js API Routes\nホスト: Vercel（未定 ⚠️要確認）\nレスポンス: M配列 12ヶ月分\n           + tv★/tr★/enq★/est★\n認証: JWT / Supabase Auth（未定）"]
+        API2["PUT /api/actuals/:staff_id\n────────────\nランタイム: Next.js API Routes\n役割: 実績5項目 保存\nBody: vis/enq/est/cl/ag\nトリガー: onchange → 即時PUT"]
+        API3["PUT /api/calendar/:staff_id ⚠️未定義\n────────────\nランタイム: Next.js API Routes\n役割: 休み設定 保存\nトリガー: onchange → 3秒debounce\nBody: off_days JSON配列"]
+        API4["PUT /api/sim/:staff_id ⚠️未定義\n────────────\nランタイム: Next.js API Routes\n役割: 努力KPI設定 保存\nトリガー: onchange → 3秒debounce\nBody: simVals JSONB"]
+        MT --> API1
+        MA --> API1
+        CAL --> API3
+        SIM --> API4
     end
 
-    subgraph P4["フェーズ 4　エンドユーザー参照"]
-        direction LR
-        RM_DETAIL["RM詳細画面\n────────────\nホスト: リスクモンスター社\n遷移方法: URLリンク クリック\n認証: 手動ログイン（RM社アカウント）\n注意: FLUED側では\n      認証情報を一切保持しない"]
-        HS_REL -.->|"⑧ URLリンク クリック\n(HubSpot画面上)"| RM_DETAIL
-        RM_USER["RMアカウント保持者\n────────────\nロール: エンドユーザー\n操作: ブラウザで手動ログイン"]
-        RM_USER -.->|"⑨ ログイン"| RM_DETAIL
+    subgraph P4["フェーズ 4　個人画面（スタッフ）"]
+        S_CAL["📅 カレンダーサブタブ\n────────────\n技術: Next.js + React\nUI: 7×6グリッド カレンダー\n操作: タップで休み⇔出勤切替\n連動: recalcWD() 残り営業日再計算\n保存: onchange → PUT /api/calendar"]
+        S_ACT["📊 今日サブタブ\n────────────\n技術: Next.js + React\nUI: ファネル / BN診断 / 目標指標\n操作: 実績5項目 手入力\n保存: onchange → PUT /api/actuals\n計算: 全てクライアントサイドJS"]
+        S_SIM["📐 SIMサブタブ\n────────────\n技術: Next.js + React\nUI: SIMカレンダー + KPI入力\n操作: 転換率3値 / 台粗利 入力\n保存: onchange → PUT /api/sim\n計算: 着地SIM / 改善プラン（クライアントJS）"]
+        API1 -->|"⑤ 初期データ読込\nJSON レスポンス"| S_CAL
+        API1 --> S_ACT
+        API1 --> S_SIM
+        S_CAL -->|"⑥ 3秒 debounce\n⚠️自動保存フロー未定義"| API3
+        S_ACT -->|"⑦ 即時 PUT"| API2
+        S_SIM -->|"⑧ 3秒 debounce\n⚠️自動保存フロー未定義"| API4
+        API2 --> MA
+        API3 --> CAL
+        API4 --> SIM
     end
 
-    subgraph UNKNOWN["⚠️ 要確認・未定義"]
-        UNK1["APIキー登録フロー\n────────────\n誰が / いつ / どこで\nAirtableにAPIキーを\n登録するか未定義"]
-        UNK2["HubSpot認証\n────────────\nFirebase→HubSpot書込に\n使うPrivate App Token\nの管理方法未定義"]
-        UNK3["RM APIキーの更新\n────────────\nキーローテーション時の\nAirtable更新フロー未定義"]
+    subgraph P5["フェーズ 5　店長画面"]
+        M_CAL["店舗カレンダービュー\n────────────\n技術: Next.js + React\nデータソース: staff_calendars\n表示: 全メンバーの稼働日\n⚠️同期タイミング未定義\n（リアルタイム? ページ読込時?）"]
+        M_KPI["メンバー別KPIビュー\n────────────\n技術: Next.js + React\nデータソース: staff_sim_settings\n表示: 個人設定KPI・着地予想\n⚠️同期タイミング未定義"]
+        M_DD["ドリルダウン閲覧\n────────────\n技術: Next.js Router\n操作: 店長が個人画面を閲覧専用で表示\n認証: role=manager のみ許可"]
+        API1 -->|"⑨ 初期データ読込"| M_CAL
+        API1 --> M_KPI
+        CAL -->|"⚠️連携フロー未定義"| M_CAL
+        SIM -->|"⚠️連携フロー未定義"| M_KPI
+        M_DD -.->|"⑩ 閲覧専用\nread-only"| S_ACT
+    end
+
+    subgraph P6["フェーズ 6　エリア長・事業部長画面 ⚠️未実装"]
+        A_VIEW["エリア長画面\n────────────\n技術: Next.js + React（未実装）\nデータ: 各店長KPI + 店舗着地予想集計\n⚠️店長→エリア長の\n  ロールアップ設計未定義"]
+        E_VIEW["事業部長画面\n────────────\n技術: Next.js + React（未実装）\nデータ: 各エリア長KPI + エリア着地予想集計\n⚠️エリア長→事業部長の\n  ロールアップ設計未定義"]
+        M_KPI -->|"⚠️連携フロー未定義"| A_VIEW
+        A_VIEW -->|"⚠️連携フロー未定義"| E_VIEW
     end
 
     classDef p0 fill:#0f172a,stroke:#6366f1,color:#c7d2fe
     classDef p1 fill:#0c1a0c,stroke:#16a34a,color:#bbf7d0
-    classDef p2 fill:#1a0c0c,stroke:#dc2626,color:#fecaca
-    classDef p3 fill:#0c1220,stroke:#2563eb,color:#bfdbfe
-    classDef p4 fill:#1a130c,stroke:#d97706,color:#fde68a
-    classDef unk fill:#1a1010,stroke:#ef4444,stroke-width:2px,color:#fca5a5,stroke-dasharray:4 4
+    classDef p2 fill:#0c1220,stroke:#2563eb,color:#bfdbfe
+    classDef p3 fill:#14290e,stroke:#15803d,color:#bbf7d0
+    classDef p4 fill:#1a1a2e,stroke:#7c3aed,color:#ddd6fe
+    classDef p5 fill:#0f1f2e,stroke:#0ea5e9,color:#bae6fd
+    classDef p6 fill:#1a1a10,stroke:#ca8a04,color:#fef08a
+    classDef warn stroke:#ef4444,stroke-width:2px,stroke-dasharray:4 3
 
-    class HS_CRM,HS_WH p0
-    class FB_FUNC,AT,SENTRY p1
-    class RM_API p2
-    class HS_OBJ,HS_REL p3
-    class RM_DETAIL,RM_USER p4
-    class UNK1,UNK2,UNK3 unk
-
-```
+    class SS p0
+    class N8N_B,N8N_M p1
+    class MT,MA p2
+    class CAL,SIM warn
+    class API1,API2 p3
+    class API3,API4 warn
+    class S_CAL,S_ACT,S_SIM p4
+    class M_CAL,M_KPI,M_DD p5
+    class A_VIEW,E_VIEW p6
