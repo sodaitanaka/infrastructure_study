@@ -1,73 +1,66 @@
 ```mermaid
 
 flowchart TB
-    subgraph EXT["外部データソース"]
-        SS["📊 スプレッドシート\n目標シート\n(tgt / gpu / tv / tr)"]
-        CS["👤 カーディーラー\n現場スタッフ\n実績5項目入力"]
+
+    subgraph P0["フェーズ 0　トリガー検知"]
+        direction LR
+        HS_CRM["HubSpot CRM\n────────────\n会社オブジェクト\nプロパティ: 与信チェック\n技術: HubSpot Workflow\n料金: HubSpot有償プラン"]
+        HS_WH["Webhook 送信\n────────────\nイベント: プロパティ変更\n条件: 与信チェック = はい\n技術: HubSpot Webhook設定\n送信先: Firebase Functions URL"]
+        HS_CRM -->|"① プロパティ変更検知"| HS_WH
     end
 
-    subgraph ETL["バッチ・統合レイヤー (n8n)"]
-        N8N_B["n8n バッチ\n期初・定期実行\nSS→DB取込"]
-        N8N_M["n8n 手動トリガー\n確定月実績\nSS→DB上書き"]
+    subgraph P1["フェーズ 1　バックエンド受信・APIキー取得"]
+        direction LR
+        FB_FUNC["Firebase Functions\n────────────\nランタイム: Node.js\nホスト: Google Cloud\n役割: Webhookエンドポイント\n        / オーケストレーター"]
+        AT["Airtable\n────────────\nテーブル: エンドユーザーマスタ\n保管データ: RM APIキー\n暗号化: AES-256\n役割: シークレットストア"]
+        SENTRY["Sentry\n────────────\nSDK: @sentry/node\n役割: エラー監視・アラート\n通知先: Slack / メール"]
+        HS_WH -->|"② Webhook受信"| FB_FUNC
+        FB_FUNC -->|"③ APIキー取得\n(会社IDで検索)"| AT
+        AT -->|"③' 復号済みAPIキー返却"| FB_FUNC
+        FB_FUNC -->|"例外発生時 エラー送信"| SENTRY
     end
 
-    subgraph DB["データベース層"]
-        MT["monthly_targets\n─────────────\nstaff_id\nmonth\ntgt / gpu\ntv ★ / tr ★"]
-        MA["monthly_actuals\n─────────────\nstaff_id\nmonth\nact / ag / vis\nenq ★ / est ★\nst (done/active/future)"]
+    subgraph P2["フェーズ 2　外部API実行"]
+        direction LR
+        RM_API["リスクモンスター API\n────────────\nエンドポイント: RM社提供\n認証: エンドユーザーの APIキー\n返却値: 格付 / 評点 / 反社\n        + RM詳細画面URL\n注意: APIキーはFLUEDが\n      保持せず必ず中継のみ"]
+        FB_FUNC -->|"④ API実行\n(エンドユーザーのキーで)\nHTTP POST"| RM_API
+        RM_API -->|"⑤ 結果返却\n格付・評点・反社\n+ 詳細URL"| FB_FUNC
     end
 
-    subgraph API["API層"]
-        API1["GET /api/monthly/:staff_id\n─────────────────────\nレスポンス:\nM配列 12ヶ月分\n+ tv★ / tr★ / enq★ / est★"]
+    subgraph P3["フェーズ 3　HubSpot書き戻し"]
+        direction LR
+        HS_OBJ["掲載情報オブジェクト\n────────────\n技術: HubSpot カスタムオブジェクト\nAPIキー: HubSpot Private App\n書込フィールド:\n  与信結果（格付/評点/反社）\n  RM詳細URL"]
+        HS_REL["会社オブジェクト\n────────────\n技術: HubSpot 標準オブジェクト\n操作: 掲載情報と関連付け"]
+        FB_FUNC -->|"⑥ 書込\nHubSpot API v3"| HS_OBJ
+        HS_OBJ -.->|"⑦ アソシエーション\n関連付け"| HS_REL
     end
 
-    subgraph FE["フロントエンド (SaaS画面)"]
-        direction TB
-        subgraph TABS["メインタブ"]
-            T1["月次\n(カレンダー / 今日 / SIM)"]
-            T2["四半期\n(Q1〜Q4)"]
-            T3["半期\n(上期/下期)"]
-            T4["年間\n(GAP / What-If)"]
-            T5["AI FB\n(12ヶ月 / 履歴)"]
-        end
-        STATE["クライアント状態\n─────────────\nM配列 / LY配列\nsimVals[ci]\nsimStartDay\nCAL_OFF\nmSub"]
+    subgraph P4["フェーズ 4　エンドユーザー参照"]
+        direction LR
+        RM_DETAIL["RM詳細画面\n────────────\nホスト: リスクモンスター社\n遷移方法: URLリンク クリック\n認証: 手動ログイン（RM社アカウント）\n注意: FLUED側では\n      認証情報を一切保持しない"]
+        HS_REL -.->|"⑧ URLリンク クリック\n(HubSpot画面上)"| RM_DETAIL
+        RM_USER["RMアカウント保持者\n────────────\nロール: エンドユーザー\n操作: ブラウザで手動ログイン"]
+        RM_USER -.->|"⑨ ログイン"| RM_DETAIL
     end
 
-    subgraph LOGIC["フロントエンド計算ロジック"]
-        L1["ファネル計算\nvis→enq→est→cl\n転換率 / BN診断"]
-        L2["着地SIM\n現状 vs 努力目標\n2パターン並列"]
-        L3["改善プラン\nA:台数 / B:粗利 / C:両方"]
-        L4["GAPサマリー\n接客目標行 ★"]
+    subgraph UNKNOWN["⚠️ 要確認・未定義"]
+        UNK1["APIキー登録フロー\n────────────\n誰が / いつ / どこで\nAirtableにAPIキーを\n登録するか未定義"]
+        UNK2["HubSpot認証\n────────────\nFirebase→HubSpot書込に\n使うPrivate App Token\nの管理方法未定義"]
+        UNK3["RM APIキーの更新\n────────────\nキーローテーション時の\nAirtable更新フロー未定義"]
     end
 
-    SS -->|"期初バッチ"| N8N_B
-    SS -->|"手動トリガー"| N8N_M
-    N8N_B -->|"INSERT/UPDATE"| MT
-    N8N_M -->|"UPDATE"| MA
+    classDef p0 fill:#0f172a,stroke:#6366f1,color:#c7d2fe
+    classDef p1 fill:#0c1a0c,stroke:#16a34a,color:#bbf7d0
+    classDef p2 fill:#1a0c0c,stroke:#dc2626,color:#fecaca
+    classDef p3 fill:#0c1220,stroke:#2563eb,color:#bfdbfe
+    classDef p4 fill:#1a130c,stroke:#d97706,color:#fde68a
+    classDef unk fill:#1a1010,stroke:#ef4444,stroke-width:2px,color:#fca5a5,stroke-dasharray:4 4
 
-    MT --> API1
-    MA --> API1
-    API1 -->|"JSON レスポンス"| STATE
-
-    CS -->|"5項目 手入力\n(onchange)"| FE
-    FE -->|"PUT /api/monthly/:id\nenq / est 保存 ★"| MA
-
-    STATE --> TABS
-    STATE --> LOGIC
-    LOGIC --> TABS
-
-    classDef extBox fill:#1e293b,stroke:#475569,color:#e2e8f0
-    classDef etlBox fill:#3b1f0f,stroke:#b45309,color:#fde68a
-    classDef dbBox fill:#0c2340,stroke:#1d4ed8,color:#bfdbfe
-    classDef apiBox fill:#14290e,stroke:#15803d,color:#bbf7d0
-    classDef feBox fill:#1a1a2e,stroke:#7c3aed,color:#ddd6fe
-    classDef logicBox fill:#1f1217,stroke:#be185d,color:#fbcfe8
-    classDef newBadge fill:#7c3aed,stroke:#7c3aed,color:#fff
-
-    class SS,CS extBox
-    class N8N_B,N8N_M etlBox
-    class MT,MA dbBox
-    class API1 apiBox
-    class T1,T2,T3,T4,T5,STATE feBox
-    class L1,L2,L3,L4 logicBox
+    class HS_CRM,HS_WH p0
+    class FB_FUNC,AT,SENTRY p1
+    class RM_API p2
+    class HS_OBJ,HS_REL p3
+    class RM_DETAIL,RM_USER p4
+    class UNK1,UNK2,UNK3 unk
 
 ```
