@@ -11,20 +11,20 @@
 flowchart LR
     W[Webhook受信] --> NI[Normalize Input]
     NI --> EXT[PDF/DOCX/XLSX抽出]
-    EXT --> OCR["OCR API Call\n⚠️ 問題A"]
+    EXT --> OCR["OCR API Call<br/>問題A"]
     OCR --> NT[Normalize New Text]
 
     NI --> SIM[Loop Over Similar Files]
-    SIM --> OCR2["OCR API Call1\n⚠️ 問題A"]
+    SIM --> OCR2["OCR API Call1<br/>問題A"]
     OCR2 --> AGG[Aggregate Similar Files Text]
 
-    NT --> PC["Prepare Compare Payload\n⚠️ 問題B・C"]
+    NT --> PC["Prepare Compare Payload<br/>問題B・C"]
     AGG --> PC
-    PRIC["Priority Compare Items Config\n⚠️ 問題D"] --> PC
+    PRIC["Priority Compare Items Config<br/>問題D"] --> PC
 
-    PC --> BP["Build OpenRouter Payload\n⚠️ 問題E・F"]
-    BP --> DIFF["OpenRouter Diff Compare\nClaude Sonnet 4.5"]
-    DIFF --> PJ["Parse JSON Result\n⚠️ 問題G"]
+    PC --> BP["Build OpenRouter Payload<br/>問題E・F"]
+    BP --> DIFF["OpenRouter Diff Compare<br/>Claude Sonnet 4.5"]
+    DIFF --> PJ["Parse JSON Result<br/>問題G"]
     PJ --> EXCEL[Excel生成]
     EXCEL --> SP[SharePoint Upload]
 
@@ -73,12 +73,12 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    subgraph 仕様書PDF
-        T[表（数値・スペック）]
-        H[ヘッダー・フッター\nページ番号・文書番号]
+    subgraph pdf["仕様書PDF"]
+        T["表(数値・スペック)"]
+        H["ヘッダー・フッター<br/>ページ番号・文書番号"]
         C[2段組レイアウト]
     end
-    subgraph OCR後テキスト（問題あり）
+    subgraph ocr_out["OCR後テキスト(問題あり)"]
         T2[列が崩れた表]
         H2[ページ番号が本文に混入]
         C2[左右カラムが混在]
@@ -86,8 +86,8 @@ flowchart LR
     T --> T2
     H --> H2
     C --> C2
-    T2 --> ERR["比較値の行ずれ\n→ Claude差分誤判定"]
-    H2 --> ERR2["不要なノイズ\n→ 差分誤検知"]
+    T2 --> ERR["比較値の行ずれ<br/>→ Claude差分誤判定"]
+    H2 --> ERR2["不要なノイズ<br/>→ 差分誤検知"]
 ```
 
 ### 修正案
@@ -130,11 +130,11 @@ candidate_document: cap(candidate.text,   70000),
 
 ```mermaid
 flowchart LR
-    DOC["仕様書テキスト\n（例: 90,000文字）"] --> CAP["70,000文字でカット"]
+    DOC["仕様書テキスト<br/>例: 90,000文字"] --> CAP["70,000文字でカット"]
     CAP --> CLAUDE["Claudeへ渡す"]
-    CAP --> LOST["後半20,000文字は消える\n比較項目が後半にある場合\n→「（記載なし）」と誤出力"]
+    CAP --> LOST["後半20,000文字は消える<br/>比較項目が後半にある場合<br/>→記載なしと誤出力"]
     CLAUDE --> OUT["差分レポート"]
-    LOST --> ERR["実際は記載あるのに\n「（記載なし）」になる"]
+    LOST --> ERR["実際は記載あるのに<br/>記載なしになる"]
 ```
 
 カットされたかどうかをClaudeは知らないため、`（記載なし）` と `カットによる欠落` を区別できない。
@@ -431,8 +431,8 @@ if (missing.length) {
 
 ```mermaid
 flowchart LR
-    A["過去の仕様書ペア\n（今回ファイル + 元ファイル）"] --> B["人間が正解差分を作成\n（Excelで手作業）"]
-    B --> C["ゴールドセット（10〜20件）"]
+    A["過去の仕様書ペア<br/>今回ファイル + 元ファイル"] --> B["人間が正解差分を作成<br/>Excelで手作業"]
+    B --> C["ゴールドセット 10〜20件"]
     C --> D["プロンプト変更時に再実行"]
     D --> E["正解との一致率を算出"]
     E --> F["改善効果を定量評価"]
@@ -458,16 +458,16 @@ flowchart LR
 ```mermaid
 quadrantChart
     title 優先度マトリクス（重要度 × 対応工数）
-    x-axis 対応工数 小 --> 大
-    y-axis 重要度 低 --> 高
-    問題B テキストカット通知: [0.2, 0.88]
-    問題E before/after強調: [0.2, 0.85]
-    問題A OCRプロンプト改善: [0.25, 0.82]
-    問題D 部署不明エラー化: [0.15, 0.68]
-    問題F プロンプト再構成: [0.55, 0.72]
-    問題G 欠損時の方針決定: [0.3, 0.65]
-    問題C 候補ファイル透明化: [0.3, 0.62]
-    問題H ゴールドセット作成: [0.7, 0.85]
+    x-axis 対応工数小 --> 対応工数大
+    y-axis 重要度低 --> 重要度高
+    "B テキストカット通知": [0.2, 0.88]
+    "E before/after強調": [0.2, 0.85]
+    "A OCRプロンプト改善": [0.25, 0.82]
+    "H ゴールドセット作成": [0.7, 0.85]
+    "D 部署不明エラー化": [0.15, 0.68]
+    "F プロンプト再構成": [0.55, 0.72]
+    "G 欠損時の方針決定": [0.3, 0.65]
+    "C 候補ファイル透明化": [0.3, 0.62]
 ```
 
 ### 今すぐできる修正（工数小・効果大）
